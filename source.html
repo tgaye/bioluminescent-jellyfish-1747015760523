@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bioluminescent Jellyfish</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #000428, #004e92);
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.8.0/lib/p5.js"></script>
+
+<base target="_self">
+
+
+    <div id="canvas-container"></div>
+
+    <script>
+        let jellyfish = [];
+        let bubbles = [];
+        let lightParticles = [];
+        let bgGraphics;
+        let lastInteractionTime = 0;
+        let isDaytime = false;
+        let audioContext;
+        let isAudioEnabled = false;
+
+        function setup() {
+            const container = document.getElementById('canvas-container');
+            const canvas = createCanvas(container.offsetWidth, container.offsetHeight);
+            canvas.parent('canvas-container');
+            
+            colorMode(HSB, 360, 100, 100, 1);
+            noStroke();
+            
+            // Create background graphics
+            bgGraphics = createGraphics(width, height);
+            drawBackground();
+            
+            // Initialize jellyfish
+            for (let i = 0; i < 15; i++) {
+                jellyfish.push(new Jellyfish());
+            }
+            
+            // Initialize bubbles
+            for (let i = 0; i < 100; i++) {
+                bubbles.push(new Bubble());
+            }
+            
+            // Try to initialize audio
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                isAudioEnabled = true;
+            } catch (e) {
+                console.log("Audio not supported");
+                isAudioEnabled = false;
+            }
+            
+            frameRate(60);
+        }
+
+        function draw() {
+            // Draw background
+            image(bgGraphics, 0, 0);
+            
+            // Update and display bubbles
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+                bubbles[i].update();
+                bubbles[i].display();
+                if (bubbles[i].isOffScreen()) {
+                    bubbles.splice(i, 1);
+                    bubbles.push(new Bubble());
+                }
+            }
+            
+            // Update and display jellyfish
+            for (let j of jellyfish) {
+                j.update();
+                j.display();
+            }
+            
+            // Update and display light particles
+            for (let i = lightParticles.length - 1; i >= 0; i--) {
+                lightParticles[i].update();
+                lightParticles[i].display();
+                if (lightParticles[i].isDead()) {
+                    lightParticles.splice(i, 1);
+                }
+            }
+            
+            // Day/night cycle based on interaction
+            if (millis() - lastInteractionTime > 30000) {
+                isDaytime = !isDaytime;
+                lastInteractionTime = millis();
+                drawBackground();
+            }
+            
+            // Add subtle water caustics effect
+            drawCaustics();
+        }
+
+        function drawBackground() {
+            bgGraphics.clear();
+            bgGraphics.colorMode(HSB, 360, 100, 100, 1);
+            
+            if (isDaytime) {
+                // Daytime gradient
+                for (let y = 0; y < height; y++) {
+                    let inter = map(y, 0, height, 0, 1);
+                    let c = lerpColor(color(190, 70, 30), color(220, 90, 80), inter);
+                    bgGraphics.stroke(c);
+                    bgGraphics.line(0, y, width, y);
+                }
+            } else {
+                // Nighttime gradient
+                for (let y = 0; y < height; y++) {
+                    let inter = map(y, 0, height, 0, 1);
+                    let c = lerpColor(color(230, 90, 10), color(240, 90, 30), inter);
+                    bgGraphics.stroke(c);
+                    bgGraphics.line(0, y, width, y);
+                }
+            }
+        }
+
+        function drawCaustics() {
+            push();
+            blendMode(OVERLAY);
+            noStroke();
+            for (let i = 0; i < 20; i++) {
+                let x = noise(frameCount * 0.01 + i * 100) * width;
+                let y = noise(frameCount * 0.01 + i * 200) * height;
+                let s = noise(frameCount * 0.01 + i * 300) * 100 + 50;
+                let a = noise(frameCount * 0.01 + i * 400) * 0.1;
+                
+                if (isDaytime) {
+                    fill(60, 10, 100, a);
+                } else {
+                    fill(200, 10, 100, a);
+                }
+                
+                ellipse(x, y, s, s);
+            }
+            pop();
+        }
+
+        function mouseMoved() {
+            lastInteractionTime = millis();
+            
+            // Create light particles at mouse position
+            for (let i = 0; i < 3; i++) {
+                lightParticles.push(new LightParticle(mouseX, mouseY));
+            }
+            
+            // Play subtle sound if audio is enabled
+            if (isAudioEnabled && frameCount % 5 === 0) {
+                playInteractionSound(map(mouseY, 0, height, 0.2, 0.8));
+            }
+            
+            // Attract jellyfish to mouse
+            for (let j of jellyfish) {
+                j.reactToMouse(mouseX, mouseY);
+            }
+        }
+
+        function mousePressed() {
+            lastInteractionTime = millis();
+            
+            // Create burst of particles
+            for (let i = 0; i < 30; i++) {
+                lightParticles.push(new LightParticle(mouseX, mouseY, true));
+            }
+            
+            // Play sound if audio is enabled
+            if (isAudioEnabled) {
+                playBurstSound();
+            }
+            
+            // Toggle day/night on click
+            isDaytime = !isDaytime;
+            drawBackground();
+        }
+
+        function playInteractionSound(pitchMod) {
+            if (!isAudioEnabled) return;
+            
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            
+            osc.type = 'sine';
+            osc.frequency.value = 220 + pitchMod * 440;
+            gain.gain.value = 0.1;
+            
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+            osc.stop(audioContext.currentTime + 0.5);
+        }
+
+        function playBurstSound() {
+            if (!isAudioEnabled) return;
+            
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(110, audioContext.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.3);
+            gain.gain.value = 0.2;
+            
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+            osc.stop(audioContext.currentTime + 0.5);
+        }
+
+        function windowResized() {
+            const container = document.getElementById('canvas-container');
+            resizeCanvas(container.offsetWidth, container.offsetHeight);
+            drawBackground();
+        }
+
+        class Jellyfish {
+            constructor() {
+                this.reset();
+                this.tentacles = [];
+                this.tentacleCount = floor(random(5, 10));
+                this.hue = random(180, 280);
+                this.saturation = random(70, 90);
+                this.brightness = random(70, 90);
+                this.size = random(30, 80);
+                this.pulseSpeed = random(0.02, 0.05);
+                this.pulsePhase = random(TWO_PI);
+                
+                // Initialize tentacles
+                for (let i = 0; i < this.tentacleCount; i++) {
+                    this.tentacles.push({
+                        length: random(this.size * 0.8, this.size * 1.5),
+                        segments: floor(random(8, 15)),
+                        noiseOffset: random(1000)
+                    });
+                }
+            }
+            
+            reset() {
+                this.x = random(width);
+                this.y = random(-100, height + 100);
+                this.vx = random(-0.5, 0.5);
+                this.vy = random(0.5, 1.5);
+                this.targetX = random(width);
+                this.targetY = random(height);
+                this.lerpSpeed = random(0.005, 0.01);
+            }
+            
+            update() {
+                // Move toward target with some randomness
+                this.x = lerp(this.x, this.targetX, this.lerpSpeed);
+                this.y = lerp(this.y, this.targetY, this.lerpSpeed);
+                
+                // Add slight drift
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // Change target occasionally
+                if (random() < 0.005) {
+                    this.targetX = random(width);
+                    this.targetY = random(height);
+                }
+                
+                // Wrap around screen edges
+                if (this.x < -this.size) this.x = width + this.size;
+                if (this.x > width + this.size) this.x = -this.size;
+                if (this.y < -this.size * 2) this.y = height + this.size;
+                if (this.y > height + this.size) this.y = -this.size * 2;
+                
+                // Update pulse phase
+                this.pulsePhase += this.pulseSpeed;
+            }
+            
+            reactToMouse(mx, my) {
+                // Calculate distance to mouse
+                let d = dist(this.x, this.y, mx, my);
+                let influence = map(d, 0, 200, 1, 0, true);
+                
+                if (influence > 0) {
+                    // Move away from mouse
+                    let angle = atan2(this.y - my, this.x - mx);
+                    this.targetX = this.x + cos(angle) * 50 * influence;
+                    this.targetY = this.y + sin(angle) * 50 * influence;
+                    
+                    // Change color based on proximity
+                    this.hue = (this.hue + influence * 10) % 360;
+                    
+                    // Emit particles
+                    if (random() < influence * 0.1) {
+                        lightParticles.push(new LightParticle(this.x, this.y - this.size * 0.3));
+                    }
+                }
+            }
+            
+            display() {
+                push();
+                translate(this.x, this.y);
+                
+                // Body glow
+                let pulseSize = sin(this.pulsePhase) * 0.2 + 1;
+                let currentSize = this.size * pulseSize;
+                
+                // Draw glow effect
+                for (let i = 5; i > 0; i--) {
+                    let s = currentSize + i * 10;
+                    fill(this.hue, this.saturation, this.brightness, 0.1);
+                    ellipse(0, 0, s, s * 0.8);
+                }
+                
+                // Draw body
+                fill(this.hue, this.saturation, this.brightness);
+                ellipse(0, 0, currentSize, currentSize * 0.8);
+                
+                // Draw highlights
+                fill(this.hue, this.saturation - 20, this.brightness + 10);
+                ellipse(-currentSize * 0.2, -currentSize * 0.1, currentSize * 0.3, currentSize * 0.2);
+                
+                // Draw tentacles
+                for (let i = 0; i < this.tentacles.length; i++) {
+                    let t = this.tentacles[i];
+                    let angle = map(i, 0, this.tentacles.length - 1, -PI/4, PI/4);
+                    this.drawTentacle(0, currentSize * 0.4, angle, t);
+                }
+                
+                pop();
+            }
+            
+            drawTentacle(x, y, baseAngle, tentacle) {
+                push();
+                translate(x, y);
+                rotate(baseAngle);
+                
+                beginShape();
+                vertex(0, 0);
+                
+                for (let i = 1; i <= tentacle.segments; i++) {
+                    let inter = i / tentacle.segments;
+                    let segLength = tentacle.length * inter;
+                    let segWidth = map(i, 0, tentacle.segments, 5, 1);
+                    
+                    let noiseVal = noise(tentacle.noiseOffset, frameCount * 0.01 + i * 0.1);
+                    let angle = map(noiseVal, 0, 1, -PI/8, PI/8);
+                    
+                    let x = cos(angle) * segLength;
+                    let y = sin(angle) * segLength;
+                    
+                    // Draw tentacle segment
+                    fill(
+                        this.hue + i * 2,
+                        this.saturation - i * 3,
+                        this.brightness - i * 5,
+                        map(i, 0, tentacle.segments, 0.8, 0.3)
+                    );
+                    
+                    curveVertex(x, y);
+                    
+                    // Add glow to tentacle tips
+                    if (i === tentacle.segments) {
+                        fill(this.hue, this.saturation, this.brightness, 0.3);
+                        ellipse(x, y, segWidth * 3, segWidth * 3);
+                    }
+                }
+                
+                endShape();
+                pop();
+            }
+        }
+
+        class Bubble {
+            constructor() {
+                this.reset();
+                this.size = random(5, 20);
+                this.speed = random(1, 3);
+                this.wobbleAmount = random(0.5, 2);
+                this.wobbleSpeed = random(0.02, 0.05);
+                this.wobbleOffset = random(TWO_PI);
+            }
+            
+            reset() {
+                this.x = random(width);
+                this.y = height + random(20, 100);
+                this.alpha = random(50, 150);
+            }
+            
+            update() {
+                this.y -= this.speed;
+                this.x += sin(frameCount * this.wobbleSpeed + this.wobbleOffset) * this.wobbleAmount;
+                
+                // Random horizontal movement
+                if (random() < 0.01) {
+                    this.wobbleAmount = random(0.5, 2);
+                }
+                
+                // Size change
+                this.size += random(-0.1, 0.1);
+                this.size = constrain(this.size, 5, 20);
+            }
+            
+            display() {
+                fill(180, 30, 90, this.alpha);
+                ellipse(this.x, this.y, this.size, this.size);
+                
+                // Bubble highlight
+                fill(180, 10, 100, this.alpha * 0.8);
+                ellipse(
+                    this.x - this.size * 0.3,
+                    this.y - this.size * 0.3,
+                    this.size * 0.3,
+                    this.size * 0.3
+                );
+            }
+            
+            isOffScreen() {
+                return this.y < -this.size;
+            }
+        }
+
+        class LightParticle {
+            constructor(x, y, isBurst = false) {
+                this.x = x;
+                this.y = y;
+                this.size = random(2, 6);
+                this.life = random(30, 100);
+                this.maxLife = this.life;
+                this.hue = random(180, 280);
+                this.saturation = random(70, 90);
+                this.brightness = random(80, 100);
+                
+                if (isBurst) {
+                    this.vx = random(-3, 3);
+                    this.vy = random(-3, 3);
+                    this.gravity = 0.05;
+                } else {
+                    this.vx = random(-0.5, 0.5);
+                    this.vy = random(-0.5, 0.5);
+                    this.gravity = 0.01;
+                }
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += this.gravity;
+                this.life--;
+                
+                // Fade out
+                this.size *= 0.98;
+            }
+            
+            display() {
+                let alpha = map(this.life, 0, this.maxLife, 0, 1);
+                fill(this.hue, this.saturation, this.brightness, alpha);
+                ellipse(this.x, this.y, this.size, this.size);
+            }
+            
+            isDead() {
+                return this.life <= 0 || this.size < 0.5;
+            }
+        }
+    </script>
+
+              
+          
+                
+          
+              
